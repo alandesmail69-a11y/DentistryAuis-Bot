@@ -1,36 +1,32 @@
-# [Project name]
+# Telegram Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A Python Telegram bot built with python-telegram-bot v21 using the async Application pattern.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `cd telegram-bot && python main.py` — run the Telegram bot
+- Required env: `TELEGRAM_BOT_TOKEN` — your bot token from [@BotFather](https://t.me/BotFather)
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Python 3.11
+- python-telegram-bot v21 (async, Application builder pattern)
+- python-dotenv for local `.env` support
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `telegram-bot/main.py` — entry point; wires up all handlers and starts polling
+- `telegram-bot/bot/config.py` — reads `TELEGRAM_BOT_TOKEN` from env
+- `telegram-bot/bot/handlers/commands.py` — `/start`, `/help`, `/about`, `/echo`
+- `telegram-bot/bot/handlers/messages.py` — plain text and unknown command handlers
+- `telegram-bot/bot/handlers/errors.py` — global error handler
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
-
-## Product
-
-_Describe the high-level user-facing capabilities of this app once they exist._
+- All handlers are async functions following PTB v20+ conventions.
+- Handlers are split by type (commands vs messages vs errors) for clarity.
+- Config is centralised in `bot/config.py` — add new env vars there.
+- The bot uses long-polling (`run_polling`) which is fine for development; switch to webhooks for production.
 
 ## User preferences
 
@@ -38,8 +34,6 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Get a bot token from [@BotFather](https://t.me/BotFather) on Telegram (`/newbot`).
+- The `TELEGRAM_BOT_TOKEN` secret must be set before starting the workflow.
+- Only one instance of the bot can poll at a time — stop existing instances before starting a new one.
