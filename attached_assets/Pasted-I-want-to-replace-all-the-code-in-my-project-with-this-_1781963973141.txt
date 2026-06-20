@@ -1,3 +1,7 @@
+I want to replace all the code in my project with this new code. Please update my files for me.
+
+First, delete everything in main.py and replace it with this code:
+
 import os, io
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
@@ -27,50 +31,41 @@ LECTURES = {
 
 lecture_contents = {}
 
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
 genai.configure(api_key=GEMINI_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update: Update, context):
     keyboard = [[InlineKeyboardButton(f"📚 {LECTURES[s]['name']}", callback_data=f"sem_{s}")] for s in LECTURES]
-    text = "🦷 Welcome! Choose a semester:"
-    if update.message:
-        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
-    else:
-        await update.callback_query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.message.reply_text("🦷 Welcome! Choose a semester:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-
-async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button_click(update: Update, context):
     query = update.callback_query
     await query.answer()
     data = query.data
 
     if data.startswith("sem_"):
-        sem_id = data[len("sem_"):]
+        sem_id = data.split("_")[1]
         context.user_data["sem"] = sem_id
         topics = LECTURES[sem_id]["topics"]
-
+        
         if not topics:
             await query.edit_message_text(f"📂 {LECTURES[sem_id]['name']}\n\n⚠️ No lectures added yet.")
             return
-
+        
         keyboard = []
         for t_id, t_name in topics.items():
             key = f"{sem_id}_{t_id}"
             status = "✅" if key in lecture_contents else "📤"
             keyboard.append([InlineKeyboardButton(f"{status} {t_name}", callback_data=f"topic_{key}")])
         keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="back")])
-        await query.edit_message_text(
-            f"📂 {LECTURES[sem_id]['name']} - Choose:",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await query.edit_message_text(f"📂 {LECTURES[sem_id]['name']} - Choose:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("topic_"):
-        key = data[len("topic_"):]
-        sem_id, topic_id = key.split("_", 1)
+        key = data.split("_")[1]
+        sem_id, topic_id = key.split("_")
         topic_name = LECTURES[sem_id]["topics"][topic_id]
         context.user_data['current_lecture'] = key
 
@@ -81,74 +76,54 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton("🔄 Re-Upload PDF", callback_data=f"upload_{key}")],
                 [InlineKeyboardButton("🔙 Back", callback_data=f"sem_{sem_id}")]
             ]
-            await query.edit_message_text(
-                f"✅ *{topic_name}* is ready!\n\nWhat would you like to do?",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+            await query.edit_message_text(f"✅ *{topic_name}* is ready!\n\nWhat would you like to do?", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
         else:
             context.user_data['awaiting_upload'] = key
-            await query.edit_message_text(
-                f"📤 *{topic_name}* has no content yet.\n\nPlease **send the PDF file** for this lecture right here in this chat.",
-                parse_mode="Markdown"
-            )
+            await query.edit_message_text(f"📤 *{topic_name}* has no content yet.\n\nPlease **send the PDF file** for this lecture right here in this chat.", parse_mode="Markdown")
 
     elif data.startswith("upload_"):
-        key = data[len("upload_"):]
+        key = data.split("_")[1]
         context.user_data['awaiting_upload'] = key
         await query.edit_message_text("📤 Please send the new PDF file for this lecture.")
 
     elif data.startswith("ask_") or data.startswith("quiz_"):
-        if data.startswith("ask_"):
-            key = data[len("ask_"):]
-            action = "ask"
-            prompt_hint = "✍️ Type your question below."
-        else:
-            key = data[len("quiz_"):]
-            action = "quiz"
-            prompt_hint = "✍️ Type 'yes' to generate a 5-question quiz, or type your specific topic."
+        key = data.split("_")[1]
         context.user_data['current_lecture'] = key
-        context.user_data['action'] = action
-        await query.edit_message_text(prompt_hint)
+        context.user_data['action'] = "ask" if data.startswith("ask_") else "quiz"
+        await query.edit_message_text("✍️ Type your question below." if data.startswith("ask_") else "✍️ Type 'yes' to generate a 5-question quiz, or type your specific topic.")
 
     elif data == "back":
         await start(update, context)
 
-
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_document(update: Update, context):
     key = context.user_data.get('awaiting_upload')
     if not key:
         await update.message.reply_text("⚠️ Please select a lecture first using /start.")
         return
-
+    
     file = await update.message.document.get_file()
     pdf_bytes = await file.download_as_bytearray()
-
+    
     try:
         reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
         text = ""
         for page in reader.pages:
             text += page.extract_text()
-
+        
         if not text.strip():
             await update.message.reply_text("⚠️ Could not read text from this PDF. Try another file.")
             return
-
+        
         lecture_contents[key] = text
         context.user_data['awaiting_upload'] = None
-
-        sem_id, topic_id = key.split("_", 1)
+        
+        sem_id, topic_id = key.split("_")
         topic_name = LECTURES[sem_id]["topics"][topic_id]
-        await update.message.reply_text(
-            f"✅ *{topic_name}* uploaded successfully! ({len(text)} characters)\n\n"
-            f"Click /start, go to Semester {sem_id}, and select it to ask questions!",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"✅ *{topic_name}* uploaded successfully! ({len(text)} characters)\n\nClick /start, go to Semester {sem_id}, and select it to ask questions!", parse_mode="Markdown")
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error reading PDF: {str(e)}")
 
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_message(update: Update, context):
     user_text = update.message.text
     key = context.user_data.get('current_lecture')
     action = context.user_data.get('action', 'ask')
@@ -158,7 +133,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     lecture_text = lecture_contents[key]
-    sem_id, topic_id = key.split("_", 1)
+    sem_id, topic_id = key.split("_")
     topic_name = LECTURES[sem_id]["topics"][topic_id]
 
     try:
@@ -173,14 +148,10 @@ Lecture text: {lecture_text}
 Student question: {user_text}"""
 
         response = model.generate_content(prompt)
-        await update.message.reply_text(
-            f"🧑‍🏫 *{topic_name}*\n\n{response.text}",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text(f"🧑‍🏫 *{topic_name}*\n\n{response.text}", parse_mode="Markdown")
         context.user_data['action'] = 'ask'
     except Exception as e:
         await update.message.reply_text(f"⚠️ AI error: {str(e)}")
-
 
 def main():
     app = Application.builder().token(TOKEN).build()
@@ -191,6 +162,12 @@ def main():
     print("🤖 Bot is running...")
     app.run_polling()
 
-
 if __name__ == "__main__":
     main()
+
+Second, delete everything in requirements.txt and replace it with this:
+
+python-telegram-bot
+google-generativeai
+PyPDF2
+python-dotenv
