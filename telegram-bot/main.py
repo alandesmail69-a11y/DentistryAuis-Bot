@@ -868,7 +868,7 @@ Format: List 5 questions with 4 options each (A, B, C, D) and provide the correc
 Lecture text: {lecture_text}
 Student question: {user_text}"""
 
-        response = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
+        response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         await update.message.reply_text(
             f"🧑‍🏫 *{lec_name}*\n\n{response.text}",
             parse_mode="Markdown"
