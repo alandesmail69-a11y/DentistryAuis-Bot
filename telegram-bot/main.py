@@ -664,6 +664,52 @@ if not TOKEN or not GROQ_API_KEY:
 client = Groq(api_key=GROQ_API_KEY)
 
 
+# ---------- DYNAMIC LECTURE MANAGEMENT (JSON) ----------
+DYNAMIC_LECTURES_FILE = "data/dynamic_lectures.json"
+
+def load_dynamic_lectures():
+    os.makedirs("data", exist_ok=True)
+    if not os.path.exists(DYNAMIC_LECTURES_FILE):
+        return
+    try:
+        with open(DYNAMIC_LECTURES_FILE, "r") as f:
+            dynamic = json.load(f)
+        for sem_id, sem_data in dynamic.items():
+            if sem_id not in LECTURES:
+                LECTURES[sem_id] = {"name": sem_data.get("name", f"Semester {sem_id}"), "courses": {}}
+            for course_id, course_data in sem_data.get("courses", {}).items():
+                if course_id not in LECTURES[sem_id]["courses"]:
+                    LECTURES[sem_id]["courses"][course_id] = {"name": course_data.get("name", course_id.title()), "lectures": {}}
+                for lec_id, lec_name in course_data.get("lectures", {}).items():
+                    LECTURES[sem_id]["courses"][course_id]["lectures"][lec_id] = lec_name
+    except Exception as e:
+        print(f"⚠️ Error loading dynamic lectures: {e}")
+
+def add_dynamic_lecture(sem_id, sem_name, course_id, course_name, lec_id, lec_name):
+    os.makedirs("data", exist_ok=True)
+    existing = {}
+    if os.path.exists(DYNAMIC_LECTURES_FILE):
+        try:
+            with open(DYNAMIC_LECTURES_FILE, "r") as f:
+                existing = json.load(f)
+        except Exception:
+            pass
+    if sem_id not in existing:
+        existing[sem_id] = {"name": sem_name, "courses": {}}
+    if course_id not in existing[sem_id]["courses"]:
+        existing[sem_id]["courses"][course_id] = {"name": course_name, "lectures": {}}
+    existing[sem_id]["courses"][course_id]["lectures"][lec_id] = lec_name
+    with open(DYNAMIC_LECTURES_FILE, "w") as f:
+        json.dump(existing, f, indent=2, ensure_ascii=False)
+    if sem_id not in LECTURES:
+        LECTURES[sem_id] = {"name": sem_name, "courses": {}}
+    if course_id not in LECTURES[sem_id]["courses"]:
+        LECTURES[sem_id]["courses"][course_id] = {"name": course_name, "lectures": {}}
+    LECTURES[sem_id]["courses"][course_id]["lectures"][lec_id] = lec_name
+
+load_dynamic_lectures()
+
+
 # ---------- LOAD PDFs FROM DISK (for future courses with uploaded PDFs) ----------
 def load_pdfs():
     for sem_id, sem_data in LECTURES.items():
@@ -672,7 +718,7 @@ def load_pdfs():
                 key = f"{sem_id}_{course_id}_{lec_id}"
                 if key in lecture_contents:
                     continue  # already pre-loaded (e.g., ethics)
-                file_name = f"telegram-bot/pdfs/{sem_id}_{course_id}_{lec_id}.pdf"
+                file_name = f"pdfs/{sem_id}/{course_id}/{lec_id}.pdf"
                 if os.path.exists(file_name):
                     try:
                         with open(file_name, "rb") as f:
@@ -772,7 +818,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["current_lecture"] = key
 
         if key in lecture_contents:
-            pdf_path = f"telegram-bot/pdfs/{sem_id}/{course_id}/{lec_id}.pdf"
+            pdf_path = f"pdfs/{sem_id}/{course_id}/{lec_id}.pdf"
             keyboard = [
                 [InlineKeyboardButton("❓ Ask Question", callback_data=f"ask_{key}")],
                 [InlineKeyboardButton("📝 Generate Quiz", callback_data=f"quiz_{key}")],
@@ -813,7 +859,7 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = key.split("_", 2)
         sem_id, course_id, lec_id = parts[0], parts[1], parts[2]
         lec_name = LECTURES[sem_id]["courses"][course_id]["lectures"].get(lec_id, f"Lecture {lec_id}")
-        pdf_path = f"telegram-bot/pdfs/{sem_id}/{course_id}/{lec_id}.pdf"
+        pdf_path = f"pdfs/{sem_id}/{course_id}/{lec_id}.pdf"
         if os.path.exists(pdf_path):
             await query.answer()
             with open(pdf_path, "rb") as f:
@@ -825,6 +871,18 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
         else:
             await query.answer("PDF not available.", show_alert=True)
+
+    # ---------- UPLOAD PDF ----------
+    elif data.startswith("upload_"):
+        key = data[len("upload_"):]
+        parts = key.split("_", 2)
+        sem_id, course_id, lec_id = parts[0], parts[1], parts[2]
+        lec_name = LECTURES[sem_id]["courses"][course_id]["lectures"].get(lec_id, f"Lecture {lec_id}")
+        context.user_data["awaiting_upload"] = key
+        await query.edit_message_text(
+            f"📤 *Upload PDF for {lec_name}*\n\nSend the PDF file now and I'll load it.",
+            parse_mode="Markdown"
+        )
 
     # ---------- QUIZ ANSWER ----------
     elif data.startswith("qans_"):
@@ -921,18 +979,113 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parts = key.split("_", 2)
         sem_id, course_id, lec_id = parts[0], parts[1], parts[2]
         lec_name = LECTURES[sem_id]["courses"][course_id]["lectures"].get(lec_id, f"Lecture {lec_id}")
+
+        # Save PDF to disk so it persists after restart
+        pdf_dir = f"pdfs/{sem_id}/{course_id}"
+        os.makedirs(pdf_dir, exist_ok=True)
+        pdf_save_path = f"{pdf_dir}/{lec_id}.pdf"
+        with open(pdf_save_path, "wb") as pf:
+            pf.write(pdf_bytes)
+
         await update.message.reply_text(
-            f"✅ *{lec_name}* uploaded successfully! ({len(text)} characters)\n\n"
-            f"Use /start to navigate back and ask questions!",
+            f"✅ *{lec_name}* uploaded successfully!\n"
+            f"📄 PDF saved • 📝 {len(text)} characters extracted\n\n"
+            f"Use /start to navigate back and ask questions or take a quiz!",
             parse_mode="Markdown"
         )
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error reading PDF: {str(e)}")
 
 
+# ---------- ADD LECTURE (admin flow) ----------
+async def cmd_addlecture(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data["addlec_step"] = "sem"
+    sem_list = "\n".join([f"  • {sid} — {sdata['name']}" for sid, sdata in sorted(LECTURES.items())])
+    await update.message.reply_text(
+        f"➕ *Add a New Lecture*\n\n"
+        f"Current semesters:\n{sem_list}\n\n"
+        f"Type the *semester number* to add to (e.g. `2` for a new Semester 2):",
+        parse_mode="Markdown"
+    )
+
+
+async def handle_addlecture_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip()
+    step = context.user_data.get("addlec_step")
+
+    if step == "sem":
+        sem_id = text
+        context.user_data["addlec_sem"] = sem_id
+        if sem_id in LECTURES:
+            sem_name = LECTURES[sem_id]["name"]
+            courses = LECTURES[sem_id]["courses"]
+            courses_text = "\n".join([f"  • {cid} — {cdata['name']}" for cid, cdata in courses.items()])
+            extra = f"\nExisting courses in Semester {sem_id}:\n{courses_text}\n"
+        else:
+            sem_name = f"Semester {sem_id}"
+            extra = ""
+        context.user_data["addlec_sem_name"] = sem_name
+        context.user_data["addlec_step"] = "course"
+        await update.message.reply_text(
+            f"✅ Semester {sem_id}{extra}\n\n"
+            f"Type the *course name* (e.g. `Oral Biology` or `Terminology`):",
+            parse_mode="Markdown"
+        )
+
+    elif step == "course":
+        course_name = text
+        course_id = course_name.lower().replace(" ", "_")
+        context.user_data["addlec_course_id"] = course_id
+        context.user_data["addlec_course_name"] = course_name
+        sem_id = context.user_data.get("addlec_sem")
+        lecs_text = ""
+        if sem_id in LECTURES and course_id in LECTURES[sem_id]["courses"]:
+            lecs = LECTURES[sem_id]["courses"][course_id]["lectures"]
+            if lecs:
+                lecs_text = "\nExisting lectures:\n" + "\n".join([f"  • {lid}: {ln}" for lid, ln in lecs.items()]) + "\n"
+        context.user_data["addlec_step"] = "name"
+        await update.message.reply_text(
+            f"✅ Course: *{course_name}*{lecs_text}\n\n"
+            f"Type the *lecture name* (e.g. `Lecture 3: Tooth Morphology`):",
+            parse_mode="Markdown"
+        )
+
+    elif step == "name":
+        lec_name = text
+        sem_id = context.user_data["addlec_sem"]
+        sem_name = context.user_data["addlec_sem_name"]
+        course_id = context.user_data["addlec_course_id"]
+        course_name = context.user_data["addlec_course_name"]
+
+        existing_lecs = {}
+        if sem_id in LECTURES and course_id in LECTURES[sem_id]["courses"]:
+            existing_lecs = LECTURES[sem_id]["courses"][course_id]["lectures"]
+        digit_keys = [int(k) for k in existing_lecs if k.isdigit()]
+        lec_id = str(max(digit_keys) + 1) if digit_keys else "1"
+
+        add_dynamic_lecture(sem_id, sem_name, course_id, course_name, lec_id, lec_name)
+
+        for k in ["addlec_step", "addlec_sem", "addlec_sem_name", "addlec_course_id", "addlec_course_name"]:
+            context.user_data.pop(k, None)
+
+        await update.message.reply_text(
+            f"✅ *Lecture added!*\n\n"
+            f"📚 Semester {sem_id} → {course_name} → {lec_name}\n\n"
+            f"Use /start to navigate to it and upload the PDF.\n"
+            f"Use /addlecture to add another lecture.",
+            parse_mode="Markdown"
+        )
+
+
 # ---------- HANDLE QUESTIONS & QUIZZES ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
+
+    # Route admin flow
+    if context.user_data.get("addlec_step"):
+        await handle_addlecture_step(update, context)
+        return
+
     key = context.user_data.get("current_lecture")
     action = context.user_data.get("action", "ask")
 
@@ -1016,6 +1169,7 @@ Student question: {user_text}"""
 def main():
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("addlecture", cmd_addlecture))
     app.add_handler(CallbackQueryHandler(button_click))
     app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
