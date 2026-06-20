@@ -772,11 +772,15 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["current_lecture"] = key
 
         if key in lecture_contents:
+            pdf_path = f"telegram-bot/pdfs/{sem_id}/{course_id}/{lec_id}.pdf"
             keyboard = [
                 [InlineKeyboardButton("❓ Ask Question", callback_data=f"ask_{key}")],
                 [InlineKeyboardButton("📝 Generate Quiz", callback_data=f"quiz_{key}")],
-                [InlineKeyboardButton("🔙 Back to Lectures", callback_data=f"course_{sem_id}_{course_id}")]
             ]
+            if os.path.exists(pdf_path):
+                keyboard.append([InlineKeyboardButton("📄 View PDF", callback_data=f"viewpdf_{key}")])
+            keyboard.append([InlineKeyboardButton("🔄 Upload New PDF", callback_data=f"upload_{key}")])
+            keyboard.append([InlineKeyboardButton("🔙 Back to Lectures", callback_data=f"course_{sem_id}_{course_id}")])
             await query.edit_message_text(
                 f"✅ *{lec_name}*\n\nWhat would you like to do?",
                 parse_mode="Markdown",
@@ -802,6 +806,25 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["current_lecture"] = key
         context.user_data["action"] = action
         await query.edit_message_text(prompt_hint)
+
+    # ---------- VIEW PDF ----------
+    elif data.startswith("viewpdf_"):
+        key = data[len("viewpdf_"):]
+        parts = key.split("_", 2)
+        sem_id, course_id, lec_id = parts[0], parts[1], parts[2]
+        lec_name = LECTURES[sem_id]["courses"][course_id]["lectures"].get(lec_id, f"Lecture {lec_id}")
+        pdf_path = f"telegram-bot/pdfs/{sem_id}/{course_id}/{lec_id}.pdf"
+        if os.path.exists(pdf_path):
+            await query.answer()
+            with open(pdf_path, "rb") as f:
+                await context.bot.send_document(
+                    chat_id=update.effective_chat.id,
+                    document=f,
+                    filename=f"{lec_name}.pdf",
+                    caption=f"📄 {lec_name}"
+                )
+        else:
+            await query.answer("PDF not available.", show_alert=True)
 
     # ---------- QUIZ ANSWER ----------
     elif data.startswith("qans_"):
