@@ -1,7 +1,7 @@
 import os, io
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-from google import genai
+from groq import Groq
 import PyPDF2
 
 # ---------- COURSES AND LECTURES ----------
@@ -655,13 +655,13 @@ C. What is the ideal way for the researcher/dentist to act?
 }
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-GEMINI_KEY = os.environ.get("GEMINI_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-if not TOKEN or not GEMINI_KEY:
-    print("❌ Missing TELEGRAM_BOT_TOKEN or GEMINI_KEY in Secrets!")
+if not TOKEN or not GROQ_API_KEY:
+    print("❌ Missing TELEGRAM_BOT_TOKEN or GROQ_API_KEY in Secrets!")
     exit(1)
 
-client = genai.Client(api_key=GEMINI_KEY)
+client = Groq(api_key=GROQ_API_KEY)
 
 
 # ---------- LOAD PDFs FROM DISK (for future courses with uploaded PDFs) ----------
@@ -868,9 +868,14 @@ Format: List 5 questions with 4 options each (A, B, C, D) and provide the correc
 Lecture text: {lecture_text}
 Student question: {user_text}"""
 
-        response = client.models.generate_content(model="gemini-2.0-flash-lite", contents=prompt)
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2048,
+        )
+        answer = response.choices[0].message.content
         await update.message.reply_text(
-            f"🧑‍🏫 *{lec_name}*\n\n{response.text}",
+            f"🧑‍🏫 *{lec_name}*\n\n{answer}",
             parse_mode="Markdown"
         )
         context.user_data["action"] = "ask"
