@@ -1,7 +1,8 @@
 import os, io
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import PyPDF2
 
 LECTURES = {
@@ -30,8 +31,7 @@ lecture_contents = {}
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_KEY")
 
-genai.configure(api_key=GEMINI_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+client = genai.Client(api_key=GEMINI_KEY)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -172,7 +172,7 @@ Format: List 5 questions with 4 options each (A, B, C, D) and provide the correc
 Lecture text: {lecture_text}
 Student question: {user_text}"""
 
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
         await update.message.reply_text(
             f"🧑‍🏫 *{topic_name}*\n\n{response.text}",
             parse_mode="Markdown"
