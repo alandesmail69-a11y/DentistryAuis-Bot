@@ -1,4 +1,4 @@
-import os, io
+import os, io, json, re
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from groq import Groq
@@ -803,8 +803,73 @@ async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["action"] = action
         await query.edit_message_text(prompt_hint)
 
+    # ---------- QUIZ ANSWER ----------
+    elif data.startswith("qans_"):
+        chosen = data[len("qans_"):]
+        questions = context.user_data.get("quiz_questions", [])
+        idx = context.user_data.get("quiz_index", 0)
+        score = context.user_data.get("quiz_score", 0)
+
+        if not questions or idx >= len(questions):
+            await query.edit_message_text("⚠️ No active quiz. Use /start to begin.")
+            return
+
+        q = questions[idx]
+        correct = q["answer"].upper()
+        explanation = q.get("explanation", "")
+
+        if chosen == correct:
+            score += 1
+            context.user_data["quiz_score"] = score
+            feedback = f"✅ *Correct!*"
+        else:
+            feedback = f"❌ *Wrong!* The correct answer is **{correct}**: {q[correct]}"
+
+        if explanation:
+            feedback += f"\n\n💡 _{explanation}_"
+
+        await query.edit_message_text(feedback, parse_mode="Markdown")
+
+        next_idx = idx + 1
+        context.user_data["quiz_index"] = next_idx
+
+        if next_idx >= len(questions):
+            total = len(questions)
+            emoji = "🏆" if score == total else "🎯" if score >= total // 2 else "📚"
+            await query.message.reply_text(
+                f"{emoji} *Quiz Complete!*\n\nYou scored *{score}/{total}*.\n\n"
+                f"{'Perfect score! 🌟' if score == total else 'Keep studying and try again!' if score < total // 2 else 'Good job! Review the ones you missed.'}",
+                parse_mode="Markdown"
+            )
+            context.user_data.pop("quiz_questions", None)
+            context.user_data.pop("quiz_index", None)
+            context.user_data.pop("quiz_score", None)
+        else:
+            await send_quiz_question(query.message, questions, next_idx)
+
     elif data == "back":
         await start(update, context)
+
+
+# ---------- QUIZ HELPER ----------
+async def send_quiz_question(message, questions: list, idx: int):
+    q = questions[idx]
+    total = len(questions)
+    text = (
+        f"📝 *Question {idx + 1}/{total}*\n\n"
+        f"{q['question']}\n\n"
+        f"🅐 {q['A']}\n"
+        f"🅑 {q['B']}\n"
+        f"🅒 {q['C']}\n"
+        f"🅓 {q['D']}"
+    )
+    keyboard = [[
+        InlineKeyboardButton("A", callback_data="qans_A"),
+        InlineKeyboardButton("B", callback_data="qans_B"),
+        InlineKeyboardButton("C", callback_data="qans_C"),
+        InlineKeyboardButton("D", callback_data="qans_D"),
+    ]]
+    await message.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 # ---------- HANDLE PDF UPLOADS ----------
@@ -860,25 +925,67 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if action == "quiz":
             prompt = f"""You are a dentistry professor. Based ONLY on this lecture text, generate a 5-question multiple-choice quiz.
+Return ONLY a valid JSON array with no extra text, markdown, or explanation. Use exactly this format:
+[
+  {{
+    "question": "Question text here?",
+    "A": "First option",
+    "B": "Second option",
+    "C": "Third option",
+    "D": "Fourth option",
+    "answer": "B",
+    "explanation": "Brief one-sentence explanation of why this is correct."
+  }}
+]
 Lecture text: {lecture_text}
-Student request: {user_text}
-Format: List 5 questions with 4 options each (A, B, C, D) and provide the correct answers at the end."""
+Topic focus (if specified): {user_text}"""
+
+            await update.message.reply_text("⏳ Generating your quiz...")
+
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2048,
+            )
+            raw = response.choices[0].message.content.strip()
+
+            # Extract JSON array robustly
+            match = re.search(r'\[.*\]', raw, re.DOTALL)
+            if not match:
+                raise ValueError("Could not parse quiz JSON from response.")
+            questions = json.loads(match.group())
+
+            if not questions:
+                raise ValueError("Empty quiz returned.")
+
+            context.user_data["quiz_questions"] = questions
+            context.user_data["quiz_index"] = 0
+            context.user_data["quiz_score"] = 0
+            context.user_data["action"] = "ask"
+
+            await update.message.reply_text(
+                f"🎓 *{lec_name}* — {len(questions)}-question quiz!\nTap A, B, C, or D to answer each question.",
+                parse_mode="Markdown"
+            )
+            await send_quiz_question(update.message, questions, 0)
+
         else:
-            prompt = f"""You are a dentistry professor. Based ONLY on this lecture text, answer the student's question clearly.
+            prompt = f"""You are a dentistry professor. Based ONLY on this lecture text, answer the student's question clearly and concisely.
 Lecture text: {lecture_text}
 Student question: {user_text}"""
 
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=2048,
-        )
-        answer = response.choices[0].message.content
-        await update.message.reply_text(
-            f"🧑‍🏫 *{lec_name}*\n\n{answer}",
-            parse_mode="Markdown"
-        )
-        context.user_data["action"] = "ask"
+            response = client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=2048,
+            )
+            answer = response.choices[0].message.content
+            await update.message.reply_text(
+                f"🧑‍🏫 *{lec_name}*\n\n{answer}",
+                parse_mode="Markdown"
+            )
+            context.user_data["action"] = "ask"
+
     except Exception as e:
         await update.message.reply_text(f"⚠️ AI error: {str(e)}")
 
