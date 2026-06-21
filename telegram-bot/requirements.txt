@@ -1,4 +1,5 @@
 python-telegram-bot
-groq
 PyPDF2
 python-dotenv
+Flask
+openai
