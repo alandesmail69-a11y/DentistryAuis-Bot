@@ -1,0 +1,5 @@
+python-telegram-bot
+PyPDF2
+python-dotenv
+Flask
+openai
