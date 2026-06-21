@@ -1,4 +1,5 @@
-import os, io, json, re
+import os, io, json, re, threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 from groq import Groq
@@ -1166,7 +1167,26 @@ Student question: {user_text}"""
         await update.message.reply_text(f"⚠️ AI error: {str(e)}")
 
 
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass
+
+def start_health_server():
+    port = int(os.environ.get("PORT", 5000))
+    try:
+        server = HTTPServer(("0.0.0.0", port), HealthHandler)
+        print(f"🌐 Health server on port {port}")
+        server.serve_forever()
+    except OSError:
+        pass  # port already in use (dev environment), skip silently
+
 def main():
+    threading.Thread(target=start_health_server, daemon=True).start()
     app = Application.builder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("addlecture", cmd_addlecture))
