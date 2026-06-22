@@ -35,24 +35,30 @@ def ask_groq(prompt):
     )
     return response.choices[0].message.content
 
-# ---------- COURSES AND LECTURES ----------
+# ---------- COURSES AND LECTURES (UPDATED PATH) ----------
 LECTURES = {
     "1": {
         "name": "Semester 1",
         "courses": {
             "ethics": {
                 "name": "Ethics",
-                "files": [f"ethics{i}.pdf" for i in range(1, 14)],
+                "files": [
+                    f"telegram-bot/pdfs/1/ethics/ethics{i}.pdf" for i in range(1, 14)
+                ],
                 "desc": "Ethics in dentistry (13 files)"
             },
             "terminology": {
                 "name": "Terminology",
-                "files": [f"term{i}.pdf" for i in range(1, 21)],
+                "files": [
+                    f"telegram-bot/pdfs/1/terminology/term{i}.pdf" for i in range(1, 21)
+                ],
                 "desc": "Dental terminology (20 files)"
             },
             "biology": {
                 "name": "Biology",
-                "files": [f"bio{i}.pdf" for i in range(1, 16)],
+                "files": [
+                    f"telegram-bot/pdfs/1/biology/bio{i}.pdf" for i in range(1, 16)
+                ],
                 "desc": "Oral biology (15 files)"
             }
         }
@@ -94,6 +100,8 @@ def load_pdfs():
                 key = f"{sem_id}_{course_id}"
                 course_contents[key] = combined_text
                 print(f"📚 Combined {len(files)} files → {len(combined_text)} chars")
+            else:
+                print(f"⚠️ Could not load {course_id} – check file paths")
 
 load_pdfs()
 
