@@ -35,7 +35,7 @@ def ask_groq(prompt):
     )
     return response.choices[0].message.content
 
-# ---------- COURSES AND LECTURES (UPDATED PATH) ----------
+# ---------- COURSES AND LECTURES ----------
 LECTURES = {
     "1": {
         "name": "Semester 1",
@@ -112,19 +112,19 @@ if not TOKEN:
     exit(1)
 
 # ---------- BOT FUNCTIONS ----------
-async def start(update: Update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [[InlineKeyboardButton(f"📚 {LECTURES[s]['name']}", callback_data=f"sem_{s}")] for s in LECTURES]
     await update.message.reply_text("🦷 Welcome! Choose a semester:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def button_click(update: Update, context):
+async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
 
     if data.startswith("sem_"):
-        sem_id = data.split("_")[1]
+        sem_id = data[4:]  # everything after "sem_"
         context.user_data["sem"] = sem_id
-        courses = LECTURES[sem_id].get("courses", {})
+        courses = LECTURES.get(sem_id, {}).get("courses", {})
         if not courses:
             await query.edit_message_text(f"📂 {LECTURES[sem_id]['name']}\n\n⚠️ No courses added yet.")
             return
@@ -138,8 +138,16 @@ async def button_click(update: Update, context):
         await query.edit_message_text(f"📂 {LECTURES[sem_id]['name']} - Choose a course:", reply_markup=InlineKeyboardMarkup(keyboard))
 
     elif data.startswith("course_"):
-        key = data.split("_")[1]
-        sem_id, course_id = key.split("_")
+        key = data[7:]  # everything after "course_"
+        # key is like "1_ethics"
+        parts = key.split("_", 1)
+        if len(parts) != 2:
+            await query.edit_message_text("⚠️ Invalid course selection.")
+            return
+        sem_id, course_id = parts
+        if sem_id not in LECTURES or course_id not in LECTURES[sem_id].get("courses", {}):
+            await query.edit_message_text("⚠️ Course not found.")
+            return
         course_data = LECTURES[sem_id]["courses"][course_id]
         course_name = course_data.get("name", course_id)
         context.user_data['current_course'] = key
@@ -151,13 +159,31 @@ async def button_click(update: Update, context):
         for idx, file_name in enumerate(files, 1):
             keyboard.append([InlineKeyboardButton(f"📄 Lecture {idx}", callback_data=f"lecture_{key}_{idx-1}")])
         keyboard.append([InlineKeyboardButton("🔙 Back to Courses", callback_data=f"sem_{sem_id}")])
-        await query.edit_message_text(f"📚 *{course_name}*\n{len(files)} lectures available.\n\nClick a lecture to view it.", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+        await query.edit_message_text(
+            f"📚 *{course_name}*\n{len(files)} lectures available.\n\nClick a lecture to view it.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
     elif data.startswith("lecture_"):
-        parts = data.split("_")
-        key = f"{parts[1]}_{parts[2]}"
-        idx = int(parts[3])
-        sem_id, course_id = key.split("_")
+        # format: lecture_{sem}_{course}_{idx}
+        # e.g. lecture_1_ethics_0
+        remainder = data[8:]  # after "lecture_"
+        # split off the last part (index)
+        last_underscore = remainder.rfind("_")
+        if last_underscore == -1:
+            await query.edit_message_text("⚠️ Invalid lecture selection.")
+            return
+        key = remainder[:last_underscore]   # "1_ethics"
+        idx = int(remainder[last_underscore + 1:])
+        parts = key.split("_", 1)
+        if len(parts) != 2:
+            await query.edit_message_text("⚠️ Invalid lecture selection.")
+            return
+        sem_id, course_id = parts
+        if sem_id not in LECTURES or course_id not in LECTURES[sem_id].get("courses", {}):
+            await query.edit_message_text("⚠️ Course not found.")
+            return
         course_data = LECTURES[sem_id]["courses"][course_id]
         files = course_data.get("files", [])
         if idx >= len(files):
@@ -165,37 +191,50 @@ async def button_click(update: Update, context):
             return
         file_name = files[idx]
         if not os.path.exists(file_name):
-            await query.edit_message_text(f"⚠️ File {file_name} not found.")
+            await query.edit_message_text(f"⚠️ File not found on server: {file_name}")
             return
-        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(file_name, 'rb'), caption=f"📄 {course_data['name']} - Lecture {idx+1}")
+        await context.bot.send_document(
+            chat_id=update.effective_chat.id,
+            document=open(file_name, 'rb'),
+            caption=f"📄 {course_data['name']} - Lecture {idx+1}"
+        )
         if key in course_contents:
             keyboard = [
                 [InlineKeyboardButton("❓ Ask Question", callback_data=f"ask_{key}")],
                 [InlineKeyboardButton("📝 Generate Quiz", callback_data=f"quiz_{key}")],
                 [InlineKeyboardButton("🔙 Back to Lectures", callback_data=f"course_{key}")]
             ]
-            await query.edit_message_text(f"✅ *{course_data['name']}* - Lecture {idx+1} sent.\n\n💡 Ask questions based on ALL lectures in this course!", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+            await query.edit_message_text(
+                f"✅ *{course_data['name']}* - Lecture {idx+1} sent.\n\n💡 Ask questions based on ALL lectures in this course!",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
         else:
-            await query.edit_message_text(f"⚠️ Course content not loaded.")
+            await query.edit_message_text("⚠️ Course content not loaded — AI questions unavailable.")
 
     elif data.startswith("ask_") or data.startswith("quiz_"):
-        key = data.split("_")[1]
+        key = data[4:]  # everything after "ask_" or "quiz_"
         context.user_data['current_course'] = key
         context.user_data['action'] = "ask" if data.startswith("ask_") else "quiz"
-        await query.edit_message_text("✍️ Type your question below." if data.startswith("ask_") else "✍️ Type 'yes' for a 5-question quiz.")
+        if data.startswith("ask_"):
+            await query.edit_message_text("✍️ Type your question below.")
+        else:
+            await query.edit_message_text("✍️ Type 'yes' to get a 5-question quiz on this course.")
 
     elif data == "back":
-        await start(update, context)
+        keyboard = [[InlineKeyboardButton(f"📚 {LECTURES[s]['name']}", callback_data=f"sem_{s}")] for s in LECTURES]
+        await query.edit_message_text("🦷 Welcome! Choose a semester:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-async def handle_message(update: Update, context):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     key = context.user_data.get('current_course')
     action = context.user_data.get('action', 'ask')
     if not key or key not in course_contents:
-        await update.message.reply_text("⚠️ Select a course first via /start.")
+        await update.message.reply_text("⚠️ Please select a course first via /start.")
         return
     lecture_text = course_contents[key]
-    sem_id, course_id = key.split("_")
+    parts = key.split("_", 1)
+    sem_id, course_id = parts
     course_name = LECTURES[sem_id]["courses"][course_id].get("name", course_id)
     try:
         if action == "quiz":
@@ -207,7 +246,7 @@ Format: List 5 questions with 4 options each (A, B, C, D) and provide the correc
             prompt = f"""You are a dentistry professor. Based ONLY on this lecture text, answer the student's question clearly.
 Lecture text: {lecture_text}
 Student question: {user_text}"""
-        
+
         response = ask_groq(prompt)
         await update.message.reply_text(f"🧑‍🏫 *{course_name}*\n\n{response}", parse_mode="Markdown")
         context.user_data['action'] = 'ask'
